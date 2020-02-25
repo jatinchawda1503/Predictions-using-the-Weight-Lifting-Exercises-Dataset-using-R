@@ -1,0 +1,167 @@
+---
+title: "Predictions using the Weight Lifting Dataset"
+author: "Jatin chawda"
+date: "2/24/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE, fig.width=10, fig.height=6)
+options(width=120)
+
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+```
+
+
+# Summary 
+
+The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har.
+
+training data >  https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+testing data > https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+Based on a dataset provide by HAR http://groupware.les.inf.puc-rio.br/har we will try to train a predictive model to predict what exercise was performed using a dataset with 159 features
+
+We'll take the following steps:
+
+1. Process the data
+2. Explore the data
+3. Model selection
+4. Test results
+
+
+# Process the data
+
+```{r, echo=TRUE, cache = T}
+
+trainRaw <- read.csv("data.csv")
+
+testRaw <- read.csv("validation.csv")
+
+```
+
+# Explore the data
+
+
+```{r, echo=TRUE, results= FALSE}
+dim(trainRaw)
+
+dim(testRaw)
+
+sum(complete.cases(trainRaw))
+
+
+```
+
+
+We Have Seen Lots of NA Values Lets Remove those 
+
+```{r, echo=TRUE, cache = T}
+
+trainRaw <- trainRaw[, colSums(is.na(trainRaw)) == 0]
+testRaw <- testRaw[, colSums(is.na(testRaw)) == 0]
+
+```
+Also remove all time related data, since we won't use those
+Then convert all factors to integers
+```{r,echo=TRUE, cache = T}
+classe <- trainRaw$classe
+trainRemove <- grepl("^X|timestamp|window", names(trainRaw))
+trainRaw <- trainRaw[, !trainRemove]
+trainCleaned <- trainRaw[, sapply(trainRaw, is.numeric)]
+trainCleaned$classe <- classe
+testRemove <- grepl("^X|timestamp|window", names(testRaw))
+testRaw <- testRaw[, !testRemove]
+testCleaned <- testRaw[, sapply(testRaw, is.numeric)]
+```
+
+## Now We Will Do Some Expolatory Data Analysis
+
+Since the test set provided is the the ultimate validation set, we will split the current training in a test and train set to work with.
+
+```{r,echo=TRUE, cache = T}
+set.seed(22519) 
+inTrain <- createDataPartition(trainCleaned$classe, p=0.70, list=F)
+trainData <- trainCleaned[inTrain, ]
+testData <- trainCleaned[-inTrain, ]
+```
+
+
+Let's check visually if there is indeed hard to use these 2 as possible simple linear predictors.
+
+```{r,echo=TRUE, cache = T}
+library(Rmisc)
+library(ggplot2)
+p1 <- ggplot(trainData, aes(classe,pitch_forearm)) + 
+  geom_boxplot(aes(fill=classe))
+
+p2 <- ggplot(trainData, aes(classe, magnet_arm_x)) + 
+  geom_boxplot(aes(fill=classe))
+
+multiplot(p1,p2,cols=2)
+```
+
+Clearly there is no hard seperation of classes possible using only these 'highly' correlated features. 
+Let's train some models to get closer to a way of predicting these classe's
+
+
+# Model selection
+
+Let's identify variables with high correlations amongst each other in our set, so we can possibly exclude them from the pca or training.
+
+We will check afterwards if these modifications to the dataset make the model more accurate (and perhaps even faster)
+
+
+```{r , echo=TRUE, cache = T}
+corrPlot <- cor(trainData[, -length(names(trainData))])
+corrplot(corrPlot, method="color", type="lower", order="hclust", tl.cex=0.70, tl.col="black", tl.srt = 45, diag = FALSE)
+```
+
+We see that there are some features that aree quite correlated with each other. 
+
+Now we'll do some actual Random Forest training. 
+We fit a predictive model for activity recognition using Random Forest algorithm because it automatically selects important variables and is robust to correlated covariates & outliers in general.
+We will use 5-fold cross validation when applying the algorithm.
+
+```{r , echo=TRUE, cache = T}
+controlRf <- trainControl(method="cv", 5)
+modelRf <- train(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=250)
+modelRf
+```
+
+We will estimate the performance of the model on the validation data set
+
+The estimated accuracy of the model is 99.30% and the estimated out-of-sample error is 0.70%.
+
+
+#Test results
+
+we apply the model to the original testing data set downloaded from the data source.
+We remove the problem_id column first.
+
+```{r , echo=TRUE, cache = T}
+result <- predict(modelRf, testCleaned[, -length(names(testCleaned))])
+result
+```
+
+
+## Appendix: Figures
+1. Correlation Matrix Visualization  
+```{r, cache = T, echo=TRUE}
+corrPlot <- cor(trainData[, -length(names(trainData))])
+corrplot(corrPlot, method="color", type="lower", order="hclust", tl.cex=0.70, tl.col="black", tl.srt = 45, diag = FALSE)
+
+```
+2. Decision Tree Visualization
+```{r, cache = T,echo=TRUE}
+treeModel <- rpart(classe ~ ., data=trainData, method="class")
+prp(treeModel) 
+```
